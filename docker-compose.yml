@@ -39,8 +39,9 @@ services:
       ENVIRONMENT: local
       LOG_LEVEL: DEBUG
       PROCESS_TYPE: web
-      JWT_SECRET_ARN: dev-jwt-secret
+      JWT_SECRET_ARN: JWT_SECRET
       SECRETS_PROVIDER: env
+      JWT_SECRET: "dev-jwt-secret"
     ports:
       - "8000:8000"
     depends_on:

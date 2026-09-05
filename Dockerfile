@@ -12,12 +12,9 @@ RUN pip install uv
 # Copy dependencies
 COPY pyproject.toml uv.lock ./
 
-# Build venv
-RUN uv venv /opt/venv
-
-# Install dependencies into venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN uv pip install -r <(uv pip compile pyproject.toml)
+# Create and populate venv with uv
+RUN uv venv /opt/venv --python python3.11 && \
+    uv pip install --python /opt/venv/bin/python -e .
 
 # Stage 2: Runtime
 FROM python:3.11-slim

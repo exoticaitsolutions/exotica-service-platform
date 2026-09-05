@@ -4,7 +4,7 @@
 import sys
 from datetime import datetime, timedelta, UTC
 
-import jwt
+from jose import jwt
 
 
 def generate_token(
