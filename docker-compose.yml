@@ -42,6 +42,15 @@ services:
       JWT_SECRET_ARN: JWT_SECRET
       SECRETS_PROVIDER: env
       JWT_SECRET: "dev-jwt-secret"
+      # QuickBooks Integration — see .env.template for setup
+      QUICKBOOKS_CLIENT_ID: ${QUICKBOOKS_CLIENT_ID:-}
+      QUICKBOOKS_CLIENT_SECRET: ${QUICKBOOKS_CLIENT_SECRET:-}
+      QUICKBOOKS_REALM_ID: ${QUICKBOOKS_REALM_ID:-}
+      QUICKBOOKS_REFRESH_TOKEN: ${QUICKBOOKS_REFRESH_TOKEN:-}
+      QUICKBOOKS_ENVIRONMENT: ${QUICKBOOKS_ENVIRONMENT:-sandbox}
+      # ServiceTitan Integration
+      SERVICETITAN_API_KEY: ${SERVICETITAN_API_KEY:-}
+      SERVICETITAN_API_ENDPOINT: ${SERVICETITAN_API_ENDPOINT:-https://api.sandbox.servicetitan.com}
     ports:
       - "8000:8000"
     depends_on:
