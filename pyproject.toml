@@ -1,0 +1,101 @@
+[project]
+name = "exotica-service-platform"
+version = "0.1.0"
+description = "Exotica ServiceTitan Platform — Module 1: Accounting Reconciliation"
+requires-python = ">=3.11"
+authors = [
+    {name = "Exotica IT Solutions", email = "dev@exoticaitsolutions.com"},
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "asyncpg",
+    "alembic",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.0",
+    "structlog",
+    "python-jose[cryptography]",
+    "python-multipart",
+    "httpx",
+    "redis",
+    "uuid6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-mock",
+    "respx",
+    "mypy",
+    "types-redis",
+    "types-requests",
+    "ruff",
+    "black",
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+disallow_any_unimported = false
+disallow_any_expr = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "jose.*", "uuid6.*", "boto3.*", "alembic.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--strict-markers --tb=short"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
+
+[tool.coverage.run]
+source = ["core", "integrations", "modules"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = [
+    "E",
+    "F",
+    "W",
+    "C901",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "A",
+]
+ignore = [
+    "E501",
+    "N818",
+]
+
+[tool.ruff.isort]
+known-first-party = ["core", "integrations", "modules"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'

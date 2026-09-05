@@ -1,0 +1,877 @@
+<title>Reconciliation Dashboard</title>
+<style>
+:root {
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+  --bg-light: #f9fafb;
+  --bg-white: #ffffff;
+  --border-light: #e5e7eb;
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg-light);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.auth-panel {
+  background: var(--bg-white);
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow);
+  border-left: 4px solid var(--color-info);
+}
+
+.auth-panel.error {
+  border-left-color: var(--color-error);
+}
+
+.auth-panel.success {
+  border-left-color: var(--color-success);
+}
+
+.auth-controls {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.auth-controls input {
+  flex: 1;
+  min-width: 250px;
+  padding: 0.75rem;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.auth-controls button {
+  padding: 0.75rem 1.5rem;
+  background: var(--color-info);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.auth-controls button:hover {
+  background: #2563eb;
+}
+
+.auth-status {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.auth-status.connected {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+}
+
+.auth-status.disconnected {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
+}
+
+header {
+  background: var(--bg-white);
+  padding: 2rem;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow);
+  border-bottom: 3px solid var(--color-info);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+header h1 {
+  margin: 0 0 0.5rem 0;
+  font-size: 2rem;
+}
+
+header p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.header-content {
+  flex: 1;
+}
+
+.reconcile-btn {
+  padding: 0.75rem 1.5rem;
+  background: var(--color-success);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.reconcile-btn:hover:not(:disabled) {
+  background: #059669;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.reconcile-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top: 2px solid white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 0.5rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.alert {
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.alert.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
+  border-left: 4px solid var(--color-error);
+}
+
+.alert.success {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+  border-left: 4px solid var(--color-success);
+}
+
+.alert.info {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--color-info);
+  border-left: 4px solid var(--color-info);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.metric-card {
+  background: var(--bg-white);
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  border-left: 4px solid var(--color-info);
+}
+
+.metric-card h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+}
+
+.metric-card .value {
+  font-size: 2rem;
+  font-weight: bold;
+  margin: 0.5rem 0;
+}
+
+.metric-card.success { border-left-color: var(--color-success); }
+.metric-card.warning { border-left-color: var(--color-warning); }
+.metric-card.error { border-left-color: var(--color-error); }
+
+.status-badge {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.status-badge.success {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+}
+
+.status-badge.warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--color-warning);
+}
+
+.status-badge.error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-error);
+}
+
+.status-badge.info {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--color-info);
+}
+
+.status-badge.in_progress {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--color-info);
+}
+
+.health-score {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.health-score .score {
+  font-size: 1.75rem;
+  font-weight: bold;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--border-light);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--color-success);
+  transition: width 0.3s ease;
+}
+
+.card {
+  background: var(--bg-white);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.card-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.filters {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+select, input {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  font-size: 0.875rem;
+  background: var(--bg-white);
+  color: var(--text-primary);
+}
+
+select:focus, input:focus {
+  outline: none;
+  border-color: var(--color-info);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  padding: 1.5rem;
+  background: var(--bg-light);
+}
+
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.summary-item .icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+
+.summary-item .label {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.summary-item .count {
+  font-size: 1.5rem;
+  font-weight: bold;
+  display: block;
+}
+
+.table-container {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+th {
+  background: var(--bg-light);
+  padding: 1rem;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border-light);
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-light);
+}
+
+tr:hover {
+  background: var(--bg-light);
+}
+
+.discrepancy-type {
+  font-weight: 500;
+  font-family: monospace;
+  font-size: 0.8rem;
+}
+
+.amount {
+  font-family: monospace;
+  font-weight: 500;
+}
+
+.pagination {
+  padding: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-light);
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  background: var(--bg-white);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background: var(--bg-light);
+  border-color: var(--color-info);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.empty-state {
+  padding: 3rem;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.empty-state p {
+  margin: 0;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+}
+
+.severity-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.5rem;
+}
+
+.severity-dot.error { background: var(--color-error); }
+.severity-dot.warning { background: var(--color-warning); }
+.severity-dot.info { background: var(--color-info); }
+</style>
+
+<div class="container">
+  <div class="auth-panel" id="authPanel">
+    <div class="auth-controls">
+      <input
+        type="password"
+        id="tokenInput"
+        placeholder="Enter JWT token (or use localStorage auth_token)"
+        onkeypress="if(event.key==='Enter') authenticateAndLoad()"
+      />
+      <button onclick="authenticateAndLoad()">Connect</button>
+      <div class="auth-status disconnected" id="authStatus">Not Connected</div>
+    </div>
+  </div>
+
+  <div id="alerts"></div>
+
+  <header id="headerSection" style="display: none;">
+    <div class="header-content">
+      <h1>🏦 Reconciliation Dashboard</h1>
+      <p>ServiceTitan ↔ QuickBooks Financial Matching</p>
+    </div>
+    <button class="reconcile-btn" id="reconcileBtn" onclick="triggerReconciliation()">
+      ▶ Start Reconciliation
+    </button>
+  </header>
+
+  <div class="metrics-grid" id="metricsGrid" style="display: none;">
+    <div class="metric-card success">
+      <h3>Health Score</h3>
+      <div class="health-score">
+        <div class="score" id="healthScore">—</div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="healthBar" style="width: 0%;"></div>
+        </div>
+      </div>
+    </div>
+    <div class="metric-card">
+      <h3>Last Run</h3>
+      <div class="value" id="lastRun">—</div>
+      <div style="font-size: 0.875rem; color: var(--text-secondary);" id="runStatus">
+        <span class="status-badge info">No runs yet</span>
+      </div>
+    </div>
+    <div class="metric-card">
+      <h3>Invoices Matched</h3>
+      <div class="value" id="matchedCount">0</div>
+      <p style="margin: 0; font-size: 0.875rem; color: var(--text-secondary);">of <span id="totalInvoices">0</span> total</p>
+    </div>
+    <div class="metric-card error">
+      <h3>Total Discrepancies</h3>
+      <div class="value" id="totalDiscrepancies">0</div>
+    </div>
+  </div>
+
+  <div class="card" id="summaryCard" style="display: none;">
+    <div class="card-header">
+      <h2>Discrepancy Summary</h2>
+    </div>
+    <div class="summary-grid" id="summaryGrid">
+      <div class="summary-item">
+        <div class="icon" style="background: rgba(239, 68, 68, 0.1); color: var(--color-error);">🔴</div>
+        <div>
+          <span class="label">Missing in QB</span>
+          <span class="count" id="count-missing_in_quickbooks">0</span>
+        </div>
+      </div>
+      <div class="summary-item">
+        <div class="icon" style="background: rgba(239, 68, 68, 0.1); color: var(--color-error);">🔴</div>
+        <div>
+          <span class="label">Missing in ST</span>
+          <span class="count" id="count-missing_in_servicetitan">0</span>
+        </div>
+      </div>
+      <div class="summary-item">
+        <div class="icon" style="background: rgba(245, 158, 11, 0.1); color: var(--color-warning);">⚠️</div>
+        <div>
+          <span class="label">Amount Mismatch</span>
+          <span class="count" id="count-amount_mismatch">0</span>
+        </div>
+      </div>
+      <div class="summary-item">
+        <div class="icon" style="background: rgba(59, 130, 246, 0.1); color: var(--color-info);">ℹ️</div>
+        <div>
+          <span class="label">Open</span>
+          <span class="count" id="count-open">0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="discrepanciesCard" style="display: none; margin-top: 2rem;">
+    <div class="card-header">
+      <h2>Discrepancies</h2>
+    </div>
+
+    <div style="padding: 1.5rem;">
+      <div class="filters">
+        <select id="severityFilter" onchange="applyFilters()">
+          <option value="">All Severities</option>
+          <option value="error">🔴 Error</option>
+          <option value="warning">⚠️ Warning</option>
+          <option value="info">ℹ️ Info</option>
+        </select>
+        <select id="typeFilter" onchange="applyFilters()">
+          <option value="">All Types</option>
+          <option value="missing_in_quickbooks">Missing in QB</option>
+          <option value="missing_in_servicetitan">Missing in ST</option>
+          <option value="amount_mismatch">Amount Mismatch</option>
+        </select>
+        <select id="statusFilter" onchange="applyFilters()">
+          <option value="">All Statuses</option>
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+        </select>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Customer</th>
+              <th>Severity</th>
+              <th>ST Invoice</th>
+              <th>QB Invoice</th>
+              <th>ST Amount</th>
+              <th>QB Amount</th>
+              <th>Difference</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="discrepanciesTable">
+            <tr>
+              <td colspan="9" class="loading">
+                <div class="spinner"></div>Loading discrepancies...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pagination">
+      <div>
+        Showing <span id="pageStart">0</span>-<span id="pageEnd">0</span> of <span id="pageTotal">0</span>
+      </div>
+      <div style="display: flex; gap: 0.5rem;">
+        <button id="prevBtn" onclick="prevPage()" disabled>← Previous</button>
+        <button id="nextBtn" onclick="nextPage()" disabled>Next →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+class ReconciliationApiClient {
+  constructor(baseUrl = 'http://localhost:8000') {
+    this.baseUrl = baseUrl;
+    this.token = localStorage.getItem('auth_token');
+  }
+
+  setToken(token) {
+    this.token = token;
+    localStorage.setItem('auth_token', token);
+  }
+
+  getHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+    };
+  }
+
+  async request(method, path, body = null) {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: this.getHeaders(),
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error?.message || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async triggerReconciliation(tenant_id, date_from, date_to) {
+    return this.request('POST', '/accounting/reconcile', {
+      tenant_id,
+      date_from,
+      date_to,
+      trigger_source: 'dashboard',
+    });
+  }
+
+  async listTenantDiscrepancies(options = {}) {
+    const params = new URLSearchParams();
+    if (options.status) params.append('status', options.status);
+    if (options.severity) params.append('severity', options.severity);
+    if (options.discrepancy_type) params.append('discrepancy_type', options.discrepancy_type);
+    if (options.limit) params.append('limit', String(options.limit));
+    if (options.offset) params.append('offset', String(options.offset));
+
+    const query = params.toString();
+    const path = `/accounting/discrepancies${query ? `?${query}` : ''}`;
+    return this.request('GET', path);
+  }
+}
+
+// Global state
+let client = null;
+let currentPage = 0;
+const pageSize = 10;
+let allDiscrepancies = [];
+let filteredDiscrepancies = [];
+let currentRun = null;
+
+function addAlert(message, type = 'info') {
+  const alerts = document.getElementById('alerts');
+  const alert = document.createElement('div');
+  alert.className = `alert ${type}`;
+  alert.textContent = message;
+  alerts.appendChild(alert);
+  setTimeout(() => alert.remove(), 5000);
+}
+
+async function authenticateAndLoad() {
+  const tokenInput = document.getElementById('tokenInput');
+  const token = tokenInput.value || localStorage.getItem('auth_token');
+
+  if (!token) {
+    addAlert('Please enter a JWT token', 'error');
+    return;
+  }
+
+  client = new ReconciliationApiClient();
+  client.setToken(token);
+
+  const authStatus = document.getElementById('authStatus');
+  authStatus.textContent = 'Connecting...';
+  authStatus.className = 'auth-status info';
+
+  try {
+    // Test the connection by fetching discrepancies
+    await client.listTenantDiscrepancies({ limit: 1 });
+
+    document.getElementById('authPanel').className = 'auth-panel success';
+    authStatus.textContent = '✓ Connected';
+    authStatus.className = 'auth-status connected';
+    document.getElementById('headerSection').style.display = 'flex';
+    document.getElementById('metricsGrid').style.display = 'grid';
+    document.getElementById('summaryCard').style.display = 'block';
+    document.getElementById('discrepanciesCard').style.display = 'block';
+
+    addAlert('Connected successfully', 'success');
+    loadData();
+  } catch (err) {
+    document.getElementById('authPanel').className = 'auth-panel error';
+    authStatus.textContent = '✗ Connection Failed';
+    authStatus.className = 'auth-status disconnected';
+    addAlert(`Connection failed: ${err.message}`, 'error');
+  }
+}
+
+async function loadData() {
+  try {
+    const response = await client.listTenantDiscrepancies({ limit: 1000 });
+    allDiscrepancies = response.items;
+    filteredDiscrepancies = [...allDiscrepancies];
+
+    updateMetrics();
+    currentPage = 0;
+    renderTable();
+  } catch (err) {
+    addAlert(`Failed to load data: ${err.message}`, 'error');
+  }
+}
+
+function updateMetrics() {
+  const total = allDiscrepancies.length;
+  document.getElementById('totalDiscrepancies').textContent = total;
+
+  const counts = {
+    missing_in_quickbooks: 0,
+    missing_in_servicetitan: 0,
+    amount_mismatch: 0,
+    open: 0,
+    error: 0,
+    warning: 0,
+  };
+
+  allDiscrepancies.forEach(d => {
+    if (counts.hasOwnProperty(d.type)) counts[d.type]++;
+    if (counts.hasOwnProperty(d.status)) counts[d.status]++;
+    if (counts.hasOwnProperty(d.severity)) counts[d.severity]++;
+  });
+
+  document.getElementById('count-missing_in_quickbooks').textContent = counts.missing_in_quickbooks;
+  document.getElementById('count-missing_in_servicetitan').textContent = counts.missing_in_servicetitan;
+  document.getElementById('count-amount_mismatch').textContent = counts.amount_mismatch;
+  document.getElementById('count-open').textContent = counts.open;
+
+  // Health score calculation: (total_invoices - total_discrepancies) / total_invoices
+  const healthPercent = Math.max(0, Math.min(100, 100 - (total * 5)));
+  document.getElementById('healthScore').textContent = healthPercent + '%';
+  document.getElementById('healthBar').style.width = healthPercent + '%';
+  document.getElementById('matchedCount').textContent = Math.max(0, total - counts.error);
+  document.getElementById('totalInvoices').textContent = total + counts.error;
+}
+
+function applyFilters() {
+  const severity = document.getElementById('severityFilter').value;
+  const type = document.getElementById('typeFilter').value;
+  const status = document.getElementById('statusFilter').value;
+
+  filteredDiscrepancies = allDiscrepancies.filter(d =>
+    (!severity || d.severity === severity) &&
+    (!type || d.type === type) &&
+    (!status || d.status === status)
+  );
+
+  currentPage = 0;
+  renderTable();
+}
+
+function renderTable() {
+  const start = currentPage * pageSize;
+  const end = Math.min(start + pageSize, filteredDiscrepancies.length);
+  const page = filteredDiscrepancies.slice(start, end);
+
+  const tbody = document.getElementById('discrepanciesTable');
+
+  if (page.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" class="empty-state">
+          <p>No discrepancies found${filteredDiscrepancies === allDiscrepancies ? ' yet' : ' matching filters'}.</p>
+        </td>
+      </tr>
+    `;
+  } else {
+    tbody.innerHTML = page.map(d => `
+      <tr>
+        <td><span class="discrepancy-type">${d.type.replace(/_/g, ' ')}</span></td>
+        <td>${d.customer_name || '—'}</td>
+        <td>
+          <span class="severity-dot ${d.severity}"></span>
+          ${d.severity.charAt(0).toUpperCase() + d.severity.slice(1)}
+        </td>
+        <td>${d.servicetitan_invoice_id || '—'}</td>
+        <td>${d.quickbooks_invoice_id || '—'}</td>
+        <td class="amount">${d.servicetitan_amount ? '$' + d.servicetitan_amount : '—'}</td>
+        <td class="amount">${d.quickbooks_amount ? '$' + d.quickbooks_amount : '—'}</td>
+        <td class="amount">$${d.difference}</td>
+        <td><span class="status-badge ${d.status === 'open' ? 'warning' : 'success'}">${d.status}</span></td>
+      </tr>
+    `).join('');
+  }
+
+  document.getElementById('pageStart').textContent = filteredDiscrepancies.length === 0 ? 0 : start + 1;
+  document.getElementById('pageEnd').textContent = end;
+  document.getElementById('pageTotal').textContent = filteredDiscrepancies.length;
+  document.getElementById('prevBtn').disabled = currentPage === 0;
+  document.getElementById('nextBtn').disabled = end >= filteredDiscrepancies.length;
+}
+
+function nextPage() {
+  if ((currentPage + 1) * pageSize < filteredDiscrepancies.length) {
+    currentPage++;
+    renderTable();
+  }
+}
+
+function prevPage() {
+  if (currentPage > 0) {
+    currentPage--;
+    renderTable();
+  }
+}
+
+async function triggerReconciliation() {
+  const btn = document.getElementById('reconcileBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Starting...';
+
+  try {
+    const tenant_id = 'default-tenant';
+    const date_to = new Date().toISOString().split('T')[0];
+    const date_from = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const run = await client.triggerReconciliation(tenant_id, date_from, date_to);
+    currentRun = run;
+
+    addAlert(`Reconciliation started: ${run.status}`, 'success');
+    document.getElementById('lastRun').textContent = new Date(run.started_at).toLocaleString();
+    document.querySelector('#runStatus .status-badge').textContent = run.status;
+    document.querySelector('#runStatus .status-badge').className = `status-badge ${run.status}`;
+
+    // Reload data after a short delay
+    setTimeout(loadData, 2000);
+  } catch (err) {
+    addAlert(`Failed to start reconciliation: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+// Auto-load saved token on page load
+window.addEventListener('load', () => {
+  const savedToken = localStorage.getItem('auth_token');
+  if (savedToken) {
+    document.getElementById('tokenInput').value = savedToken;
+    authenticateAndLoad();
+  }
+});
+</script>

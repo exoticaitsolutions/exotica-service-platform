@@ -1,0 +1,1310 @@
+openapi: 3.1.0
+
+info:
+  title: Exotica ServiceTitan Platform — Accounting Reconciliation
+  version: 1.0.0
+  description: |
+    Module 1 of the Exotica ServiceTitan Platform.
+
+    Reconciles invoices and payments between a tenant's ServiceTitan account and
+    their QuickBooks company, detects discrepancies, and produces AI-generated
+    explanations and recommended actions.
+
+    ## Architectural contract
+
+    This spec is the ONLY interface between the platform core and any external
+    consumer, including n8n workflows. External consumers never access the
+    database directly. The product must function correctly with all external
+    consumers removed — they are optional convenience layers, never dependencies.
+
+    Consequences of that rule, which implementers must honour:
+
+    - Scheduling, approval recording, and notification dispatch are implemented
+      in the platform core, not by callers. Endpoints here expose and trigger
+      them; they do not delegate them.
+    - Every mutating endpoint is idempotent via `Idempotency-Key`.
+    - Every read and write this platform performs against a tenant's ServiceTitan
+      or QuickBooks account is recorded in the audit log and is retrievable
+      through `/audit-events`.
+
+    ## Versioning
+
+    This document is versioned in Git and changes go through PR review.
+    Additive changes (new optional fields, new endpoints) bump the minor version.
+    Breaking changes require a new path prefix (`/api/v2/`), never an edit here.
+
+    ## Authentication
+
+    All endpoints require a bearer token. Tokens are scoped to a single tenant
+    except where noted. The `tenant_id` in a request body must match the token's
+    tenant or the request is rejected with 403.
+
+servers:
+  - url: https://api.exotica-platform.com/api/v1
+    description: Production
+  - url: https://staging-api.exotica-platform.com/api/v1
+    description: Staging (points at ServiceTitan integration + QuickBooks sandbox)
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Reconciliation
+    description: Triggering and inspecting reconciliation runs
+  - name: Discrepancies
+    description: Detected mismatches, their AI analysis, and resolution
+  - name: Approvals
+    description: Human sign-off on high-value write-backs
+  - name: Configuration
+    description: Per-tenant notification and scheduling configuration
+  - name: Audit
+    description: Record of every platform action against tenant financial systems
+  - name: Webhooks
+    description: Outbound callbacks fired by the platform (documented, not called)
+
+paths:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Reconciliation runs
+  # ─────────────────────────────────────────────────────────────────────────
+
+  /accounting/reconcile:
+    post:
+      tags: [Reconciliation]
+      summary: Trigger a reconciliation run
+      operationId: triggerReconciliation
+      description: |
+        Starts a reconciliation run for a tenant over a date range. Returns
+        immediately with a `run_id`; the run itself is processed asynchronously.
+
+        Only one run may be in progress per tenant at a time. A second request
+        while a run is active returns 409 with the active run's id.
+
+        The platform's own scheduler triggers runs on the tenant's configured
+        cadence. This endpoint exists for on-demand runs and does not replace
+        scheduled execution.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id]
+              properties:
+                tenant_id:
+                  type: string
+                  format: uuid
+                date_from:
+                  type: string
+                  format: date
+                  description: >
+                    Start of the period to reconcile. Defaults to 60 days before
+                    `date_to`.
+                date_to:
+                  type: string
+                  format: date
+                  description: End of the period. Defaults to today.
+                trigger_source:
+                  type: string
+                  enum: [manual, scheduled, api]
+                  default: api
+                  description: Recorded on the run for audit purposes.
+            examples:
+              onDemand:
+                summary: On-demand run for the last 60 days
+                value:
+                  tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                  trigger_source: manual
+              monthEnd:
+                summary: Explicit month-end range
+                value:
+                  tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                  date_from: '2026-08-01'
+                  date_to: '2026-08-31'
+                  trigger_source: scheduled
+      responses:
+        '202':
+          description: Run accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationRunAccepted'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: A run is already in progress for this tenant
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Error'
+                  - type: object
+                    properties:
+                      active_run_id:
+                        type: string
+                        format: uuid
+        '422':
+          description: >
+            Tenant is not ready to reconcile — for example ServiceTitan or
+            QuickBooks credentials are missing or expired.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /accounting/runs:
+    get:
+      tags: [Reconciliation]
+      summary: List reconciliation runs
+      operationId: listReconciliationRuns
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/RunStatus' }
+        - name: started_after
+          in: query
+          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of runs, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReconciliationRun' }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /accounting/runs/{run_id}:
+    get:
+      tags: [Reconciliation]
+      summary: Get a reconciliation run
+      operationId: getReconciliationRun
+      description: |
+        Poll this endpoint after triggering a run. Terminal statuses are
+        `succeeded`, `failed`, and `partial`. A `partial` run completed but could
+        not fetch all data from one of the source systems; `source_errors`
+        explains what was missed.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: The run
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReconciliationRun' }
+              examples:
+                running:
+                  summary: Still processing
+                  value:
+                    run_id: 7c1b9e22-5a4f-4c31-b0d8-2e9a7f60c114
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    status: running
+                    trigger_source: scheduled
+                    date_from: '2026-07-07'
+                    date_to: '2026-09-05'
+                    started_at: '2026-09-05T06:00:04Z'
+                    completed_at: null
+                    servicetitan_invoice_count: 45
+                    quickbooks_invoice_count: null
+                    matched_count: null
+                    discrepancy_count: null
+                    health_score: null
+                    source_errors: []
+                succeeded:
+                  summary: Completed with discrepancies found
+                  value:
+                    run_id: 7c1b9e22-5a4f-4c31-b0d8-2e9a7f60c114
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    status: succeeded
+                    trigger_source: scheduled
+                    date_from: '2026-07-07'
+                    date_to: '2026-09-05'
+                    started_at: '2026-09-05T06:00:04Z'
+                    completed_at: '2026-09-05T06:02:41Z'
+                    servicetitan_invoice_count: 45
+                    quickbooks_invoice_count: 42
+                    matched_count: 42
+                    discrepancy_count: 3
+                    health_score: 0.9333
+                    source_errors: []
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounting/runs/{run_id}/discrepancies:
+    get:
+      tags: [Reconciliation]
+      summary: List discrepancies found by a run
+      operationId: listRunDiscrepancies
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - name: severity
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/DiscrepancyType' }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of discrepancies
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Discrepancy' }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Discrepancies
+  # ─────────────────────────────────────────────────────────────────────────
+
+  /accounting/discrepancies:
+    get:
+      tags: [Discrepancies]
+      summary: List discrepancies across runs
+      operationId: listDiscrepancies
+      description: >
+        Tenant-wide view. Use `status=open` to get everything currently
+        outstanding regardless of which run detected it.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/DiscrepancyStatus' }
+        - name: severity
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/DiscrepancyType' }
+        - name: min_amount
+          in: query
+          description: Filter to discrepancies whose absolute difference is at least this.
+          schema: { type: string, description: Decimal string }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of discrepancies
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Discrepancy' }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /accounting/discrepancies/{discrepancy_id}:
+    get:
+      tags: [Discrepancies]
+      summary: Get a single discrepancy
+      operationId: getDiscrepancy
+      parameters:
+        - $ref: '#/components/parameters/DiscrepancyId'
+      responses:
+        '200':
+          description: The discrepancy, including AI analysis if complete
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Discrepancy' }
+              examples:
+                underpayment:
+                  summary: ServiceTitan shows paid, QuickBooks shows partial
+                  value:
+                    discrepancy_id: d41c8a90-77bb-4e0a-9c2f-1a5b3e88d902
+                    run_id: 7c1b9e22-5a4f-4c31-b0d8-2e9a7f60c114
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    type: underpayment
+                    severity: warning
+                    status: open
+                    servicetitan_invoice_id: 'INV-045'
+                    quickbooks_invoice_id: '1042'
+                    customer_name: Northside HVAC
+                    servicetitan_amount: '5000.00'
+                    quickbooks_amount: '3000.00'
+                    difference: '2000.00'
+                    currency: USD
+                    detected_at: '2026-09-05T06:02:38Z'
+                    analysis:
+                      explanation: >-
+                        ServiceTitan records two payments totalling $5,000 against
+                        this invoice. QuickBooks reflects only the first $3,000
+                        payment dated 2026-09-05. The second payment is most
+                        likely sitting in Undeposited Funds or has not yet cleared.
+                      likelihood: 0.85
+                      recommended_action: >-
+                        Check the QuickBooks Undeposited Funds account for a
+                        $2,000 entry. If present, deposit it to the operating
+                        account. If absent, confirm receipt with the customer.
+                      requires_human_review: true
+                      model: claude-sonnet-4-6
+                      analysed_at: '2026-09-05T06:02:40Z'
+                    approval: null
+                    resolution: null
+                missingInQuickbooks:
+                  summary: Invoice exists in ServiceTitan only
+                  value:
+                    discrepancy_id: b7702e15-3c48-4f9d-8a61-0d4c7e2f1a66
+                    run_id: 7c1b9e22-5a4f-4c31-b0d8-2e9a7f60c114
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    type: missing_in_quickbooks
+                    severity: error
+                    status: awaiting_approval
+                    servicetitan_invoice_id: 'INV-067'
+                    quickbooks_invoice_id: null
+                    customer_name: Bexley Plumbing
+                    servicetitan_amount: '12400.00'
+                    quickbooks_amount: null
+                    difference: '12400.00'
+                    currency: USD
+                    detected_at: '2026-09-05T06:02:39Z'
+                    analysis:
+                      explanation: >-
+                        This invoice was created in ServiceTitan on 2026-08-28 and
+                        has no counterpart in QuickBooks over the reconciled
+                        period. The customer record exists in both systems, so
+                        this is most likely a sync gap rather than a data-entry
+                        error.
+                      likelihood: 0.72
+                      recommended_action: >-
+                        Create the corresponding sales invoice in QuickBooks for
+                        $12,400 against Bexley Plumbing, dated 2026-08-28.
+                      requires_human_review: true
+                      model: claude-sonnet-4-6
+                      analysed_at: '2026-09-05T06:02:41Z'
+                    approval:
+                      approval_id: 91a6f3c8-4e2d-4b70-a8f5-6c9b1d0e7f23
+                      status: pending
+                      requested_at: '2026-09-05T06:02:42Z'
+                      reason: amount_above_threshold
+                      threshold_amount: '10000.00'
+                      decided_at: null
+                      decided_by: null
+                    resolution: null
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /accounting/discrepancies/{discrepancy_id}/resolve:
+    post:
+      tags: [Discrepancies]
+      summary: Record the resolution of a discrepancy
+      operationId: resolveDiscrepancy
+      description: |
+        Marks a discrepancy resolved and records who resolved it and how.
+
+        This endpoint records an outcome; it does not itself write to
+        QuickBooks or ServiceTitan. Any write-back to a source system is
+        performed by the platform only after an approval has been granted, and
+        is recorded separately in the audit log.
+
+        Resolving a discrepancy whose approval is still `pending` returns 409.
+      parameters:
+        - $ref: '#/components/parameters/DiscrepancyId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution_type, resolved_by]
+              properties:
+                resolution_type:
+                  type: string
+                  enum:
+                    - corrected_in_quickbooks
+                    - corrected_in_servicetitan
+                    - explained_no_action
+                    - false_positive
+                    - written_off
+                resolved_by:
+                  $ref: '#/components/schemas/ActorRef'
+                note:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Resolution recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Discrepancy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >
+            Discrepancy is already resolved, or has a pending approval that must
+            be decided first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Approvals
+  # ─────────────────────────────────────────────────────────────────────────
+
+  /accounting/approvals:
+    get:
+      tags: [Approvals]
+      summary: List approval requests
+      operationId: listApprovals
+      description: >
+        Approvals are raised by the platform when a proposed write-back exceeds
+        the tenant's configured threshold. They are audit artifacts: the record
+        of who authorised a change to a client's financial records.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ApprovalStatus' }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of approvals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Approval' }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /accounting/approvals/{approval_id}/decide:
+    post:
+      tags: [Approvals]
+      summary: Approve or reject a pending write-back
+      operationId: decideApproval
+      description: |
+        Records a human decision on a pending approval.
+
+        The decision is immutable once recorded. A second call with a different
+        decision returns 409; a repeat call with the same `Idempotency-Key`
+        returns the original result.
+
+        `decided_by` must identify a real person. Automated callers must pass
+        through the identity of the human who acted, not their own service
+        identity — an approval attributed to a workflow is not an audit artifact.
+      parameters:
+        - $ref: '#/components/parameters/ApprovalId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, decided_by]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected]
+                decided_by:
+                  $ref: '#/components/schemas/ActorRef'
+                note:
+                  type: string
+                  maxLength: 2000
+            examples:
+              approveFromSlack:
+                summary: Approved by a finance lead via a Slack action
+                value:
+                  decision: approved
+                  decided_by:
+                    type: user
+                    id: u_8842
+                    display_name: Dana Whitfield
+                    email: dana@northsidehvac.com
+                    channel: slack
+                  note: Confirmed with bookkeeper, invoice is genuine.
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Approval' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Approval has already been decided
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Tenant configuration
+  # ─────────────────────────────────────────────────────────────────────────
+
+  /tenants/{tenant_id}/accounting-config:
+    get:
+      tags: [Configuration]
+      summary: Get a tenant's reconciliation and notification configuration
+      operationId: getAccountingConfig
+      description: |
+        Configuration is stored in the platform database so it is versioned and
+        auditable. External consumers read it here rather than holding their own
+        copy — one workflow driven by config, never one workflow per tenant.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: The tenant's configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountingConfig' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Configuration]
+      summary: Update a tenant's configuration
+      operationId: updateAccountingConfig
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountingConfigUpdate' }
+      responses:
+        '200':
+          description: Updated configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountingConfig' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tenants/{tenant_id}/connections:
+    get:
+      tags: [Configuration]
+      summary: Get the status of a tenant's source-system connections
+      operationId: getConnections
+      description: |
+        Reports whether ServiceTitan and QuickBooks credentials are present,
+        valid, and what scopes they carry. Never returns tokens or secrets.
+
+        Use this before triggering a run to avoid a 422.
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Connection status per source system
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [servicetitan, quickbooks]
+                properties:
+                  servicetitan: { $ref: '#/components/schemas/ConnectionStatus' }
+                  quickbooks: { $ref: '#/components/schemas/ConnectionStatus' }
+              example:
+                servicetitan:
+                  connected: true
+                  environment: integration
+                  scopes: [invoices.read, payments.read, customers.read]
+                  expires_at: '2026-09-05T14:22:00Z'
+                  last_successful_call_at: '2026-09-05T06:02:31Z'
+                  status: healthy
+                quickbooks:
+                  connected: true
+                  environment: sandbox
+                  scopes: [com.intuit.quickbooks.accounting.read]
+                  expires_at: '2026-09-05T12:10:00Z'
+                  last_successful_call_at: '2026-09-05T06:02:35Z'
+                  status: healthy
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Audit
+  # ─────────────────────────────────────────────────────────────────────────
+
+  /accounting/audit-events:
+    get:
+      tags: [Audit]
+      summary: Query the audit log
+      operationId: listAuditEvents
+      description: |
+        Every read and write the platform performs against a tenant's
+        ServiceTitan or QuickBooks account is recorded here, along with every
+        approval decision and resolution.
+
+        This is the endpoint that answers "did you touch this invoice, and why".
+        Events are append-only and cannot be modified or deleted through the API.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: occurred_after
+          in: query
+          schema: { type: string, format: date-time }
+        - name: occurred_before
+          in: query
+          schema: { type: string, format: date-time }
+        - name: action
+          in: query
+          schema: { $ref: '#/components/schemas/AuditAction' }
+        - name: target_system
+          in: query
+          schema: { $ref: '#/components/schemas/SourceSystem' }
+        - name: target_ref
+          in: query
+          description: Filter to events touching a specific external record, e.g. an invoice id.
+          schema: { type: string }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of audit events, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEvent' }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+              example:
+                items:
+                  - event_id: e1f0c7a2-9b3d-4a58-8e21-77c4b0d9f315
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    occurred_at: '2026-09-05T06:02:31Z'
+                    action: source_read
+                    target_system: servicetitan
+                    target_ref: 'INV-045'
+                    actor:
+                      type: system
+                      id: reconciliation-worker
+                      display_name: Reconciliation worker
+                    run_id: 7c1b9e22-5a4f-4c31-b0d8-2e9a7f60c114
+                    detail: Fetched invoice and payment records for reconciliation.
+                page:
+                  next_cursor: null
+                  has_more: false
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Outbound webhooks (documentation only — the platform calls these)
+  # ─────────────────────────────────────────────────────────────────────────
+
+  /webhooks/outbound-reference:
+    get:
+      tags: [Webhooks]
+      summary: Reference for outbound webhook payloads
+      operationId: outboundWebhookReference
+      description: |
+        The platform does not expose this endpoint at runtime. It exists so the
+        outbound payload shapes are part of the versioned contract.
+
+        The platform POSTs to each tenant's configured `webhook_url` on:
+
+        - `reconciliation.completed` — a run reached a terminal status
+        - `discrepancy.detected` — a discrepancy was found and analysed
+        - `approval.requested` — a write-back needs human sign-off
+        - `approval.decided` — an approval was approved or rejected
+
+        Delivery guarantees: at-least-once, with exponential backoff over roughly
+        24 hours. Consumers must deduplicate on `event_id`.
+
+        Signing: every request carries `X-Exotica-Signature`, an HMAC-SHA256 of
+        the raw body using the tenant's webhook secret, and `X-Exotica-Timestamp`.
+        Reject requests whose timestamp is more than five minutes old.
+      responses:
+        '200':
+          description: Example payloads for each outbound event type
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundEvent' }
+              examples:
+                reconciliationCompleted:
+                  summary: reconciliation.completed
+                  value:
+                    event_id: 5d2b81f0-6c7a-4e93-b114-0af38e7c9d21
+                    event_type: reconciliation.completed
+                    occurred_at: '2026-09-05T06:02:41Z'
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    data:
+                      run_id: 7c1b9e22-5a4f-4c31-b0d8-2e9a7f60c114
+                      status: succeeded
+                      matched_count: 42
+                      discrepancy_count: 3
+                      health_score: 0.9333
+                discrepancyDetected:
+                  summary: discrepancy.detected
+                  value:
+                    event_id: 0c934ae7-1f52-4d80-9b6e-3a71c8d40f92
+                    event_type: discrepancy.detected
+                    occurred_at: '2026-09-05T06:02:40Z'
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    data:
+                      discrepancy_id: d41c8a90-77bb-4e0a-9c2f-1a5b3e88d902
+                      run_id: 7c1b9e22-5a4f-4c31-b0d8-2e9a7f60c114
+                      type: underpayment
+                      severity: warning
+                      difference: '2000.00'
+                      currency: USD
+                      requires_human_review: true
+                approvalRequested:
+                  summary: approval.requested
+                  value:
+                    event_id: 8ab4127e-30d9-4c6b-95f0-b2e6a147c803
+                    event_type: approval.requested
+                    occurred_at: '2026-09-05T06:02:42Z'
+                    tenant_id: 3f9a1c40-2b6e-4d7a-9f11-8c2de5a41b03
+                    data:
+                      approval_id: 91a6f3c8-4e2d-4b70-a8f5-6c9b1d0e7f23
+                      discrepancy_id: b7702e15-3c48-4f9d-8a61-0d4c7e2f1a66
+                      reason: amount_above_threshold
+                      amount: '12400.00'
+                      currency: USD
+                      threshold_amount: '10000.00'
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client-generated unique key for this logical operation. Replaying a
+        request with the same key returns the original response and performs no
+        additional work. Keys are retained for 24 hours.
+
+        Required on every mutating endpoint. External callers retry; without
+        this you will double-post approvals and double-trigger runs.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    TenantId:
+      name: tenant_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DiscrepancyId:
+      name: discrepancy_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ApprovalId:
+      name: approval_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous response's `page.next_cursor`.
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Request was malformed or failed validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Token is valid but not authorised for this tenant or action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource does not exist or is not visible to this token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: integer }
+          description: Seconds to wait before retrying.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable code, safe to branch on.
+          examples: [validation_failed, run_in_progress, approval_already_decided]
+        message:
+          type: string
+          description: Human-readable explanation. Wording may change; do not parse.
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              issue: { type: string }
+        request_id:
+          type: string
+          description: Correlates with server logs. Include when reporting problems.
+
+    PageInfo:
+      type: object
+      required: [has_more]
+      properties:
+        next_cursor:
+          type: [string, 'null']
+        has_more:
+          type: boolean
+
+    RunStatus:
+      type: string
+      enum: [queued, running, succeeded, partial, failed]
+
+    Severity:
+      type: string
+      description: |
+        `info` — expected variance, no action needed.
+        `warning` — probable timing or process gap, review recommended.
+        `error` — data is inconsistent between systems, action required.
+      enum: [info, warning, error]
+
+    DiscrepancyType:
+      type: string
+      enum:
+        - missing_in_quickbooks
+        - missing_in_servicetitan
+        - amount_mismatch
+        - underpayment
+        - overpayment
+        - payment_count_mismatch
+        - timing_mismatch
+        - duplicate_invoice
+
+    DiscrepancyStatus:
+      type: string
+      enum: [open, awaiting_approval, resolved, dismissed]
+
+    ApprovalStatus:
+      type: string
+      enum: [pending, approved, rejected, expired]
+
+    SourceSystem:
+      type: string
+      enum: [servicetitan, quickbooks]
+
+    AuditAction:
+      type: string
+      enum:
+        - source_read
+        - source_write
+        - run_started
+        - run_completed
+        - discrepancy_detected
+        - approval_requested
+        - approval_decided
+        - discrepancy_resolved
+        - config_changed
+        - connection_authorised
+        - connection_revoked
+
+    ActorRef:
+      type: object
+      description: >
+        Who performed an action. `user` must identify a real person; `system`
+        is reserved for platform components.
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [user, system]
+        id:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+          format: email
+        channel:
+          type: string
+          description: Where the action originated, e.g. dashboard, slack, api.
+
+    ReconciliationRunAccepted:
+      type: object
+      required: [run_id, status]
+      properties:
+        run_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/RunStatus' }
+        poll_url:
+          type: string
+          format: uri
+          description: Convenience URL for polling this run.
+        estimated_duration_seconds:
+          type: integer
+
+    ReconciliationRun:
+      type: object
+      required: [run_id, tenant_id, status, date_from, date_to, started_at]
+      properties:
+        run_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/RunStatus' }
+        trigger_source:
+          type: string
+          enum: [manual, scheduled, api]
+        date_from: { type: string, format: date }
+        date_to: { type: string, format: date }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        servicetitan_invoice_count: { type: [integer, 'null'] }
+        quickbooks_invoice_count: { type: [integer, 'null'] }
+        matched_count: { type: [integer, 'null'] }
+        discrepancy_count: { type: [integer, 'null'] }
+        health_score:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+          description: Matched invoices divided by total distinct invoices across both systems.
+        source_errors:
+          type: array
+          description: Populated when status is `partial` or `failed`.
+          items:
+            type: object
+            properties:
+              system: { $ref: '#/components/schemas/SourceSystem' }
+              error: { type: string }
+              message: { type: string }
+
+    Discrepancy:
+      type: object
+      required:
+        [discrepancy_id, run_id, tenant_id, type, severity, status, difference, currency, detected_at]
+      properties:
+        discrepancy_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        type: { $ref: '#/components/schemas/DiscrepancyType' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        status: { $ref: '#/components/schemas/DiscrepancyStatus' }
+        servicetitan_invoice_id: { type: [string, 'null'] }
+        quickbooks_invoice_id: { type: [string, 'null'] }
+        customer_name: { type: [string, 'null'] }
+        servicetitan_amount:
+          type: [string, 'null']
+          description: Decimal string. Never a float — money is not a float.
+        quickbooks_amount: { type: [string, 'null'] }
+        difference:
+          type: string
+          description: Absolute difference as a decimal string.
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        detected_at: { type: string, format: date-time }
+        analysis:
+          oneOf:
+            - $ref: '#/components/schemas/DiscrepancyAnalysis'
+            - type: 'null'
+          description: Null until AI analysis completes.
+        approval:
+          oneOf:
+            - $ref: '#/components/schemas/Approval'
+            - type: 'null'
+        resolution:
+          oneOf:
+            - $ref: '#/components/schemas/Resolution'
+            - type: 'null'
+
+    DiscrepancyAnalysis:
+      type: object
+      required: [explanation, recommended_action, requires_human_review]
+      properties:
+        explanation:
+          type: string
+          description: What most likely caused this discrepancy.
+        likelihood:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: >
+            Model's stated confidence in its explanation. Treat as a hint for
+            triage ordering, not as a basis for automated action.
+        recommended_action:
+          type: string
+        requires_human_review:
+          type: boolean
+        model:
+          type: string
+          description: Model identifier used, for reproducibility.
+        prompt_version:
+          type: string
+          description: Version of the analysis prompt, for reproducibility.
+        analysed_at: { type: string, format: date-time }
+
+    Approval:
+      type: object
+      required: [approval_id, discrepancy_id, status, reason, requested_at]
+      properties:
+        approval_id: { type: string, format: uuid }
+        discrepancy_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/ApprovalStatus' }
+        reason:
+          type: string
+          enum: [amount_above_threshold, type_requires_approval, low_confidence, tenant_policy]
+        threshold_amount: { type: [string, 'null'] }
+        proposed_action:
+          type: string
+          description: The write-back that will be performed if approved.
+        requested_at: { type: string, format: date-time }
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: After this time the approval moves to `expired` and no write-back occurs.
+        decided_at: { type: [string, 'null'], format: date-time }
+        decided_by:
+          oneOf:
+            - $ref: '#/components/schemas/ActorRef'
+            - type: 'null'
+        note: { type: [string, 'null'] }
+
+    Resolution:
+      type: object
+      required: [resolution_type, resolved_by, resolved_at]
+      properties:
+        resolution_type:
+          type: string
+          enum:
+            - corrected_in_quickbooks
+            - corrected_in_servicetitan
+            - explained_no_action
+            - false_positive
+            - written_off
+        resolved_by: { $ref: '#/components/schemas/ActorRef' }
+        resolved_at: { type: string, format: date-time }
+        note: { type: [string, 'null'] }
+
+    ConnectionStatus:
+      type: object
+      required: [connected, status]
+      properties:
+        connected: { type: boolean }
+        environment:
+          type: string
+          enum: [integration, sandbox, production]
+        scopes:
+          type: array
+          items: { type: string }
+          description: >
+            Granted scopes. v1 reconciliation requires read-only scopes;
+            write scopes are requested separately and only when write-back is enabled.
+        expires_at: { type: [string, 'null'], format: date-time }
+        last_successful_call_at: { type: [string, 'null'], format: date-time }
+        status:
+          type: string
+          enum: [healthy, expiring_soon, expired, revoked, error]
+        message: { type: [string, 'null'] }
+
+    AccountingConfig:
+      type: object
+      required: [tenant_id, schedule, notifications, approval_policy]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        schedule:
+          type: object
+          required: [enabled]
+          properties:
+            enabled: { type: boolean }
+            cron:
+              type: string
+              description: Cron expression evaluated in `timezone`.
+              examples: ['0 2 * * *']
+            timezone:
+              type: string
+              examples: ['America/Toronto']
+            lookback_days:
+              type: integer
+              default: 60
+        notifications:
+          type: object
+          properties:
+            webhook_url:
+              type: [string, 'null']
+              format: uri
+              description: Where outbound events are POSTed. Null disables outbound webhooks.
+            slack_channel: { type: [string, 'null'] }
+            email_recipients:
+              type: array
+              items: { type: string, format: email }
+            severity_routing:
+              type: object
+              description: Which severities are dispatched immediately versus digested.
+              properties:
+                immediate:
+                  type: array
+                  items: { $ref: '#/components/schemas/Severity' }
+                digest:
+                  type: array
+                  items: { $ref: '#/components/schemas/Severity' }
+                suppress:
+                  type: array
+                  items: { $ref: '#/components/schemas/Severity' }
+        approval_policy:
+          type: object
+          required: [approval_required_above_amount]
+          properties:
+            approval_required_above_amount:
+              type: string
+              description: Decimal string. Write-backs above this need sign-off.
+            always_require_for_types:
+              type: array
+              items: { $ref: '#/components/schemas/DiscrepancyType' }
+            approval_expiry_hours:
+              type: integer
+              default: 72
+            write_back_enabled:
+              type: boolean
+              default: false
+              description: >
+                When false the platform never writes to source systems; it only
+                detects and reports. Default for v1.
+        matching:
+          type: object
+          properties:
+            amount_tolerance:
+              type: string
+              description: Absolute tolerance below which an amount difference is ignored.
+              default: '0.01'
+            date_window_days:
+              type: integer
+              default: 7
+              description: Window for matching a payment to an invoice by date.
+
+    AccountingConfigUpdate:
+      type: object
+      description: Partial update. Omitted fields are left unchanged.
+      properties:
+        schedule: { type: object }
+        notifications: { type: object }
+        approval_policy: { type: object }
+        matching: { type: object }
+
+    AuditEvent:
+      type: object
+      required: [event_id, tenant_id, occurred_at, action, actor]
+      properties:
+        event_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        action: { $ref: '#/components/schemas/AuditAction' }
+        actor: { $ref: '#/components/schemas/ActorRef' }
+        target_system:
+          oneOf:
+            - $ref: '#/components/schemas/SourceSystem'
+            - type: 'null'
+        target_ref:
+          type: [string, 'null']
+          description: External record identifier, e.g. a ServiceTitan invoice id.
+        run_id: { type: [string, 'null'], format: uuid }
+        discrepancy_id: { type: [string, 'null'], format: uuid }
+        detail:
+          type: [string, 'null']
+          description: Human-readable summary. Contains no credentials or tokens.
+        request_id: { type: [string, 'null'] }
+
+    OutboundEvent:
+      type: object
+      required: [event_id, event_type, occurred_at, tenant_id, data]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: Deduplicate on this. Delivery is at-least-once.
+        event_type:
+          type: string
+          enum:
+            - reconciliation.completed
+            - discrepancy.detected
+            - approval.requested
+            - approval.decided
+        occurred_at: { type: string, format: date-time }
+        tenant_id: { type: string, format: uuid }
+        data:
+          type: object
+          description: >
+            Event-specific payload. Deliberately minimal — identifiers and
+            summary fields only. Consumers fetch full records from the API rather
+            than receiving financial detail in the webhook body.
