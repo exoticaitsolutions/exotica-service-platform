@@ -89,10 +89,10 @@ Write-Host "  ssh -i '$PEM_FILE' $EC2_USER@$EC2_IP"
 Write-Host ""
 
 Write-Host "Management Commands (via SSH):" -ForegroundColor Cyan
-Write-Host "  * View logs:        sudo journalctl -u exotica-api -f"
-Write-Host "  * Restart API:      sudo systemctl restart exotica-api"
-Write-Host "  * Docker logs:      cd /opt/exotica-service-platform && docker compose logs -f"
-Write-Host "  * Check status:     sudo systemctl status exotica-api"
+Write-Host "  * View API logs:    cd /opt/exotica-service-platform && docker compose logs -f api"
+Write-Host "  * Restart API:      cd /opt/exotica-service-platform && docker compose restart api"
+Write-Host "  * Check status:     cd /opt/exotica-service-platform && docker compose ps"
+Write-Host "  * View all logs:    cd /opt/exotica-service-platform && docker compose logs -f"
 Write-Host "  * Generate token:   cd /opt/exotica-service-platform && uv run python scripts/generate_token.py 'dev-jwt-secret-demo-platform-2026'"
 Write-Host ""
 

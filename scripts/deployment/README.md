@@ -107,9 +107,9 @@ CORS_ALLOWED_ORIGINS=http://99.79.73.6:8000,http://99.79.73.6,http://localhost:3
 
 ### Application Service
 
-- **FastAPI Application:** Port 8000 (systemd service `exotica-api`)
-- **Nginx Reverse Proxy:** Port 80 → 8000
-- **Auto-restart:** Enabled (restarts on failure, 10s delay)
+- **FastAPI Application:** Port 8000 (running in Docker container with restart policy)
+- **Nginx Reverse Proxy:** Port 80 → 127.0.0.1:8000
+- **Auto-restart:** Enabled via Docker Compose (restarts on failure)
 
 ## Verification
 
@@ -142,23 +142,24 @@ docker compose logs -f
 
 ### API Not Responding
 
-1. **Check systemd service:**
-   ```bash
-   sudo systemctl status exotica-api
-   sudo journalctl -u exotica-api -f
-   ```
-
-2. **Check Docker services:**
+1. **Check Docker services:**
    ```bash
    cd /opt/exotica-service-platform
    docker compose ps
-   docker compose logs -f
+   docker compose logs -f api
    ```
 
-3. **Check Nginx configuration:**
+2. **Check Nginx configuration:**
    ```bash
    sudo nginx -t
+   sudo systemctl status nginx
    sudo systemctl restart nginx
+   ```
+
+3. **Test API directly:**
+   ```bash
+   curl http://127.0.0.1:8000/health
+   docker exec exotica-service-platform-api-1 curl http://localhost:8000/health
    ```
 
 ### Database Connection Issues
@@ -211,12 +212,12 @@ docker exec -it exotica-service-platform-postgres-1 psql -U exotica -d exotica_d
 ### Restart Services
 
 ```bash
-# Restart API
-sudo systemctl restart exotica-api
-
 # Restart all Docker services
 cd /opt/exotica-service-platform
 docker compose restart
+
+# Restart just the API
+docker compose restart api
 ```
 
 ## Production Deployment

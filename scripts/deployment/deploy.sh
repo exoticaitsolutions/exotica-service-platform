@@ -79,35 +79,8 @@ uv sync
 echo "🗄️  Running database migrations..."
 uv run alembic upgrade head
 
-# Create systemd service
-echo "🔧 Creating systemd service..."
-sudo tee /etc/systemd/system/exotica-api.service > /dev/null << 'EOF'
-[Unit]
-Description=Exotica Service Platform API
-After=network.target docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/opt/exotica-service-platform
-Environment="PATH=/home/ubuntu/.local/bin:/home/ubuntu/.cargo/bin:/usr/local/bin:/usr/bin"
-Environment="HOME=/home/ubuntu"
-
-ExecStart=/home/ubuntu/.local/bin/uv run uvicorn app:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info
-
-Restart=on-failure
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable exotica-api
-sudo systemctl start exotica-api
+# API is already running in Docker, no need for systemd service
+echo "✅ API service running in Docker with restart policy"
 
 # Setup Nginx
 echo "🌐 Setting up Nginx reverse proxy..."
@@ -162,10 +135,10 @@ echo "📊 Check status:"
 echo "   Health: curl http://99.79.73.6/health"
 echo "   Docs:   http://99.79.73.6/docs"
 echo ""
-echo "📝 View logs:"
-echo "   sudo journalctl -u exotica-api -f"
-echo ""
-echo "🐳 View Docker logs:"
+echo "📝 View Docker logs:"
 echo "   docker compose logs -f"
+echo ""
+echo "🔄 Restart Docker services:"
+echo "   docker compose restart"
 echo ""
 echo "=================================================="
