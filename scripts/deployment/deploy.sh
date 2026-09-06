@@ -82,6 +82,12 @@ uv run alembic upgrade head
 # API is already running in Docker, no need for systemd service
 echo "✅ API service running in Docker with restart policy"
 
+# Setup web directory for frontend
+echo "📁 Setting up web directory..."
+sudo mkdir -p /var/www/exotica
+sudo cp frontend/dashboard.html /var/www/exotica/index.html
+sudo chown -R www-data:www-data /var/www/exotica
+
 # Setup Nginx
 echo "🌐 Setting up Nginx reverse proxy..."
 sudo tee /etc/nginx/sites-available/exotica > /dev/null << 'EOF'
@@ -93,8 +99,16 @@ server {
     listen 80 default_server;
     server_name _;
     client_max_body_size 20M;
+    root /var/www/exotica;
+    index index.html;
 
+    # Serve dashboard
     location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API proxy
+    location ~ ^/(health|docs|openapi|accounting|auth|quickbooks|servicetitan) {
         proxy_pass http://exotica_api;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -109,11 +123,6 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
-    }
-
-    location /health {
-        proxy_pass http://exotica_api;
-        access_log off;
     }
 }
 EOF
