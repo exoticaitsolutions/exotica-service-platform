@@ -55,7 +55,8 @@ REDIS_URL=redis://localhost:6379/0
 
 # Secrets management
 SECRETS_PROVIDER=env
-JWT_SECRET_ARN=dev-jwt-secret-demo-platform-2026
+JWT_SECRET_ARN=JWT_SECRET
+JWT_SECRET=dev-jwt-secret-demo-platform-2026
 
 # CORS
 CORS_ALLOWED_ORIGINS=http://99.79.73.6:8000,http://99.79.73.6,http://localhost:3000

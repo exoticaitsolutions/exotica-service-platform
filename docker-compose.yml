@@ -39,7 +39,8 @@ services:
       ENVIRONMENT: staging
       LOG_LEVEL: INFO
       PROCESS_TYPE: web
-      JWT_SECRET_ARN: dev-jwt-secret-demo-platform-2026
+      JWT_SECRET_ARN: JWT_SECRET
+      JWT_SECRET: dev-jwt-secret-demo-platform-2026
       SECRETS_PROVIDER: env
       CORS_ALLOWED_ORIGINS: http://99.79.73.6:8000,http://99.79.73.6,http://localhost:3000,http://localhost:8000,http://localhost:3001
       # QuickBooks Integration — see .env.template for setup
