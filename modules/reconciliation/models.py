@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Index
+from sqlalchemy import DateTime, JSON, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.database import Base, TimestampMixin, UUIDPrimaryKey
@@ -40,10 +40,14 @@ class ReconciliationRunModel(Base, UUIDPrimaryKey, TimestampMixin):
     )
 
     started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(UTC),
     )
-    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     # Counts from each source system
     servicetitan_invoice_count: Mapped[int | None] = mapped_column(nullable=True)
